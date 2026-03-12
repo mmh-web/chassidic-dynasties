@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-serif: 'Crimson Pro', Georgia, serif;
+  --font-hebrew: 'Frank Ruhl Libre', 'David Libre', serif;
+}
+
+body {
+  margin: 0;
+  background: #0a0a0f;
+  color: #e5e5e5;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
