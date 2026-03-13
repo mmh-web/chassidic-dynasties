@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { figures, dynastyColors } from './data/dynasties';
 import { branches } from './data/branches';
 import { connections } from './data/connections';
-import { activeToday, geographicClusters } from './data/today';
+import { activeToday } from './data/today';
 
 // Build a lookup and tree from figures
 function buildLookup() {
@@ -13,12 +13,35 @@ function buildLookup() {
       byId[f.parentId].children.push(byId[f.id]);
     }
   });
-  // Sort children by birth year
   Object.values(byId).forEach(node => {
     node.children.sort((a, b) => a.years[0] - b.years[0]);
   });
   return byId;
 }
+
+// Build lookup: figure ID → connections involving that figure
+function buildConnectionIndex() {
+  const index = {};
+  connections.forEach(conn => {
+    conn.figureIds.forEach(fId => {
+      if (!index[fId]) index[fId] = [];
+      index[fId].push(conn);
+    });
+  });
+  return index;
+}
+
+// Build lookup: branch ID → today data
+function buildTodayIndex() {
+  const index = {};
+  activeToday.forEach(d => {
+    index[d.branchId] = d;
+  });
+  return index;
+}
+
+const connectionIndex = buildConnectionIndex();
+const todayIndex = buildTodayIndex();
 
 // ============================================================
 // CONNECTION TYPE CONFIG
@@ -40,7 +63,6 @@ function SearchBar({ byId, onSelectFigure, onSelectBranch, setView }) {
   const inputRef = useRef(null);
   const containerRef = useRef(null);
 
-  // Close on outside click
   useEffect(() => {
     function handleClick(e) {
       if (containerRef.current && !containerRef.current.contains(e.target)) {
@@ -121,7 +143,6 @@ function SearchBar({ byId, onSelectFigure, onSelectBranch, setView }) {
             }
             const f = r.item;
             const color = dynastyColors[f.dynasty] || '#9ca3af';
-            // Find which branch this figure belongs to
             const parentBranch = branches.find(b =>
               b.rootIds.some(rootId => {
                 function isDescendant(nodeId) {
@@ -171,7 +192,7 @@ function SearchBar({ byId, onSelectFigure, onSelectBranch, setView }) {
 // ============================================================
 // FIGURE CARD — used in both overview and detail views
 // ============================================================
-function FigureCard({ figure, onClick, isSelected, size = 'normal', showArrow = false }) {
+function FigureCard({ figure, onClick, isSelected, size = 'normal', showArrow = false, hasStories = false }) {
   const color = dynastyColors[figure.dynasty] || '#9ca3af';
   const isSmall = size === 'small';
   const isLarge = size === 'large';
@@ -197,6 +218,11 @@ function FigureCard({ figure, onClick, isSelected, size = 'normal', showArrow = 
         style={{ background: color }}
       />
 
+      {/* Story indicator dot */}
+      {hasStories && !isSmall && (
+        <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400/70" title="Has stories" />
+      )}
+
       {/* Title */}
       <div
         className={`font-bold leading-tight ${isLarge ? 'text-lg' : isSmall ? 'text-xs' : 'text-sm'}`}
@@ -218,7 +244,6 @@ function FigureCard({ figure, onClick, isSelected, size = 'normal', showArrow = 
         {figure.years[0]}–{figure.years[1] || 'present'} · {figure.court}
       </div>
 
-      {/* Arrow indicator for branches */}
       {showArrow && (
         <div className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-lg">
           ›
@@ -229,303 +254,12 @@ function FigureCard({ figure, onClick, isSelected, size = 'normal', showArrow = 
 }
 
 // ============================================================
-// VERTICAL CONNECTOR — draws the org-chart lines
+// VERTICAL CONNECTOR
 // ============================================================
 function VerticalConnector({ color = '#374151' }) {
   return (
     <div className="flex justify-center" style={{ height: 24 }}>
       <div className="w-[2px] h-full" style={{ background: color + '50' }} />
-    </div>
-  );
-}
-
-function HorizontalBranch({ children, color = '#374151' }) {
-  const count = Array.isArray(children) ? children.length : 0;
-  if (count <= 1) return <>{children}</>;
-
-  return (
-    <div className="relative">
-      <div className="absolute top-0 left-[10%] right-[10%] h-[2px]" style={{ background: color + '40' }} />
-      <div className="flex justify-center gap-4 flex-wrap">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// NAV TABS — top navigation
-// ============================================================
-function NavTabs({ activeTab, onTabChange }) {
-  const tabs = [
-    { id: 'overview', label: 'Dynasty Tree' },
-    { id: 'connections', label: 'Connections' },
-    { id: 'today', label: 'Today' },
-  ];
-
-  return (
-    <div className="flex gap-1 bg-white/5 rounded-lg p-1">
-      {tabs.map(tab => (
-        <button
-          key={tab.id}
-          onClick={() => onTabChange(tab.id)}
-          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-            activeTab === tab.id
-              ? 'bg-white/10 text-white'
-              : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ============================================================
-// CONNECTIONS VIEW
-// ============================================================
-function ConnectionsView({ byId, onSelectBranch }) {
-  const [activeType, setActiveType] = useState(null);
-
-  const filtered = activeType
-    ? connections.filter(c => c.type === activeType)
-    : connections;
-
-  const types = Object.entries(connectionTypeConfig);
-
-  return (
-    <div className="py-8 px-4 max-w-5xl mx-auto">
-      <h1 className="text-3xl font-bold text-white mb-1 tracking-tight text-center">
-        Connections & Stories
-      </h1>
-      <p className="text-gray-500 text-sm mb-6 text-center">
-        Rivalries, family ties, tragedies, and the threads that link dynasties together
-      </p>
-
-      {/* Type filters */}
-      <div className="flex flex-wrap gap-2 justify-center mb-8">
-        <button
-          onClick={() => setActiveType(null)}
-          className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-            activeType === null
-              ? 'bg-white/15 text-white'
-              : 'bg-white/5 text-gray-500 hover:text-gray-300'
-          }`}
-        >
-          All
-        </button>
-        {types.map(([key, config]) => (
-          <button
-            key={key}
-            onClick={() => setActiveType(activeType === key ? null : key)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 ${
-              activeType === key
-                ? 'text-white'
-                : 'text-gray-500 hover:text-gray-300'
-            }`}
-            style={{
-              background: activeType === key ? config.color + '25' : 'rgba(255,255,255,0.05)',
-              borderColor: activeType === key ? config.color + '40' : 'transparent',
-            }}
-          >
-            <span>{config.icon}</span>
-            {config.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Connection cards */}
-      <div className="space-y-4">
-        {filtered.map(conn => {
-          const config = connectionTypeConfig[conn.type];
-          const involvedFigures = conn.figureIds.map(id => byId[id]).filter(Boolean);
-          const relatedBranchData = conn.relatedBranches
-            .map(bId => branches.find(b => b.id === bId))
-            .filter(Boolean);
-
-          return (
-            <div
-              key={conn.id}
-              className="rounded-xl border p-5 transition-all hover:border-opacity-60"
-              style={{
-                borderColor: config.color + '30',
-                background: config.color + '06',
-              }}
-            >
-              {/* Header */}
-              <div className="flex items-start gap-3 mb-3">
-                <span className="text-xl">{config.icon}</span>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-lg font-bold text-white">{conn.title}</h3>
-                    <span
-                      className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full"
-                      style={{ color: config.color, background: config.color + '15' }}
-                    >
-                      {config.label}
-                    </span>
-                  </div>
-
-                  {/* Involved figures */}
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {involvedFigures.map(f => {
-                      const fColor = dynastyColors[f.dynasty] || '#9ca3af';
-                      return (
-                        <span
-                          key={f.id}
-                          className="text-xs px-2 py-0.5 rounded-full border"
-                          style={{ color: fColor, borderColor: fColor + '40', background: fColor + '10' }}
-                        >
-                          {f.title || f.name}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* Description */}
-              <p className="text-gray-300 text-sm leading-relaxed mb-3">
-                {conn.description}
-              </p>
-
-              {/* Related branches */}
-              <div className="flex flex-wrap gap-2">
-                {relatedBranchData.map(b => (
-                  <button
-                    key={b.id}
-                    onClick={() => onSelectBranch(b.id)}
-                    className="text-xs flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-white/5 transition-colors"
-                    style={{ color: b.color }}
-                  >
-                    <div className="w-2 h-2 rounded-full" style={{ background: b.color }} />
-                    {b.name} →
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// TODAY VIEW
-// ============================================================
-function TodayView({ byId, onSelectBranch, onSelectFigure }) {
-  return (
-    <div className="py-8 px-4 max-w-5xl mx-auto">
-      <h1 className="text-3xl font-bold text-white mb-1 tracking-tight text-center">
-        Chassidus Today
-      </h1>
-      <p className="text-gray-500 text-sm mb-8 text-center">
-        Active dynasties, where they live, and what makes each one unique
-      </p>
-
-      {/* Geographic clusters */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
-        {geographicClusters.map(cluster => (
-          <div
-            key={cluster.region}
-            className="rounded-lg border border-white/10 bg-white/3 p-3"
-          >
-            <div className="text-xs font-bold text-white mb-1">📍 {cluster.region}</div>
-            <div className="text-[11px] text-gray-400 leading-relaxed">
-              {cluster.groups.join(', ')}
-            </div>
-            <div className="text-[10px] text-gray-600 mt-1 italic">{cluster.note}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Dynasty cards */}
-      <div className="space-y-3">
-        {activeToday.map(dynasty => {
-          const figure = byId[dynasty.figureId];
-          return (
-            <div
-              key={dynasty.id}
-              className="rounded-xl border p-4 transition-all hover:border-opacity-60"
-              style={{
-                borderColor: dynasty.color + '25',
-                background: dynasty.color + '05',
-              }}
-            >
-              <div className="flex items-start gap-4 flex-wrap lg:flex-nowrap">
-                {/* Left: Identity */}
-                <div className="flex-shrink-0 w-full lg:w-56">
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="w-3 h-3 rounded-full" style={{ background: dynasty.color }} />
-                    <h3 className="text-lg font-bold" style={{ color: dynasty.color }}>
-                      {dynasty.name}
-                    </h3>
-                  </div>
-
-                  {dynasty.currentRebbe ? (
-                    <div className="text-xs text-gray-300 mb-1">
-                      <strong className="text-gray-200">Rebbe:</strong> {dynasty.currentRebbe}
-                    </div>
-                  ) : (
-                    <div className="text-xs text-gray-500 italic mb-1">{dynasty.rebbeNote}</div>
-                  )}
-
-                  <div className="text-xs text-gray-500">
-                    <strong className="text-gray-400">Est. followers:</strong> {dynasty.estimatedFollowers}
-                  </div>
-                </div>
-
-                {/* Middle: Details */}
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-gray-400 mb-2">
-                    <strong className="text-gray-300">HQ:</strong> {dynasty.headquarters}
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {dynasty.majorCenters.map(center => (
-                      <span
-                        key={center}
-                        className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400"
-                      >
-                        {center}
-                      </span>
-                    ))}
-                  </div>
-
-                  <p className="text-xs text-gray-300 leading-relaxed">
-                    <strong className="text-gray-200">Known for:</strong> {dynasty.knownFor}
-                  </p>
-                </div>
-
-                {/* Right: Actions */}
-                <div className="flex-shrink-0 flex gap-2 items-start">
-                  {figure && (
-                    <button
-                      onClick={() => {
-                        onSelectBranch(dynasty.branchId);
-                        onSelectFigure(figure);
-                      }}
-                      className="text-xs px-3 py-1.5 rounded-lg border transition-all hover:bg-white/5"
-                      style={{ color: dynasty.color, borderColor: dynasty.color + '30' }}
-                    >
-                      View lineage →
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Footer note */}
-      <div className="mt-8 text-center text-xs text-gray-600 max-w-2xl mx-auto">
-        <strong className="text-gray-500">Note:</strong> Community sizes are approximate and debated.
-        Many smaller dynasties (Spinka, Zhidachov, Nadvorna, Dinov, etc.) are active but not listed here.
-        The Chassidic world includes hundreds of courts — this shows the major ones.
-      </div>
     </div>
   );
 }
@@ -549,18 +283,18 @@ function OverviewView({ byId, onSelectBranch, onSelectFigure }) {
 
       <VerticalConnector color="#f59e0b" />
 
-      {/* Nachman — special: great-grandson of Besht, not through Maggid */}
       <div className="w-full mb-6">
         <p className="text-center text-gray-600 text-xs mb-3 uppercase tracking-widest">
           The Maggid's students spread Chassidus across Eastern Europe
         </p>
       </div>
 
-      {/* BRANCH CARDS — the gateway into each dynasty */}
+      {/* BRANCH CARDS with Today info integrated */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
         {branches.map(branch => {
           const gateway = byId[branch.gatewayId];
           if (!gateway) return null;
+          const today = todayIndex[branch.id];
 
           return (
             <button
@@ -572,7 +306,7 @@ function OverviewView({ byId, onSelectBranch, onSelectFigure }) {
                 background: branch.color + '08',
               }}
             >
-              {/* Branch color bar */}
+              {/* Branch header */}
               <div className="flex items-center gap-2 mb-2">
                 <div className="w-3 h-3 rounded-full" style={{ background: branch.color }} />
                 <span className="font-bold text-white text-sm">{branch.name}</span>
@@ -595,9 +329,22 @@ function OverviewView({ byId, onSelectBranch, onSelectFigure }) {
               </div>
 
               {/* Description */}
-              <p className="text-[11px] text-gray-500 leading-relaxed line-clamp-3">
+              <p className="text-[11px] text-gray-500 leading-relaxed line-clamp-2 mb-2">
                 {branch.description}
               </p>
+
+              {/* TODAY STATUS — integrated into branch card */}
+              {today && (
+                <div className="border-t pt-2 mt-1" style={{ borderColor: branch.color + '15' }}>
+                  <div className="text-[10px] text-gray-400 leading-relaxed">
+                    <span className="text-gray-300 font-medium">Today:</span>{' '}
+                    {today.headquarters}
+                    {today.estimatedFollowers && (
+                      <span className="text-gray-500"> · {today.estimatedFollowers}</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Explore arrow */}
               <div
@@ -626,8 +373,8 @@ function OverviewView({ byId, onSelectBranch, onSelectFigure }) {
 function DetailView({ branchId, byId, onBack, onSelectFigure, selectedFigure }) {
   const branch = branches.find(b => b.id === branchId);
   const scrollRef = useRef(null);
+  const today = todayIndex[branchId];
 
-  // Auto-center the tree horizontally on mount
   useEffect(() => {
     const el = scrollRef.current;
     if (el) {
@@ -637,11 +384,6 @@ function DetailView({ branchId, byId, onBack, onSelectFigure, selectedFigure }) 
 
   if (!branch) return null;
 
-  // Related connections for this branch
-  const branchConnections = connections.filter(c =>
-    c.relatedBranches.includes(branchId)
-  );
-
   // Build the visual tree recursively
   function TreeNode({ nodeId, depth = 0 }) {
     const node = byId[nodeId];
@@ -649,6 +391,8 @@ function DetailView({ branchId, byId, onBack, onSelectFigure, selectedFigure }) 
     const color = dynastyColors[node.dynasty] || branch.color;
     const children = node.children || [];
     const isSelected = selectedFigure?.id === node.id;
+    const figureConnections = connectionIndex[node.id];
+    const hasStories = figureConnections && figureConnections.length > 0;
 
     return (
       <div className="flex flex-col items-center">
@@ -657,6 +401,7 @@ function DetailView({ branchId, byId, onBack, onSelectFigure, selectedFigure }) 
           onClick={onSelectFigure}
           isSelected={isSelected}
           size={depth === 0 ? 'large' : children.length > 0 ? 'normal' : 'small'}
+          hasStories={hasStories}
         />
 
         {children.length > 0 && (
@@ -666,7 +411,6 @@ function DetailView({ branchId, byId, onBack, onSelectFigure, selectedFigure }) 
               <TreeNode nodeId={children[0].id} depth={depth + 1} />
             ) : (
               <div className="relative">
-                {/* Horizontal bar connecting siblings */}
                 <div
                   className="h-[2px] mx-8"
                   style={{ background: color + '35' }}
@@ -705,6 +449,37 @@ function DetailView({ branchId, byId, onBack, onSelectFigure, selectedFigure }) 
         </div>
 
         <p className="text-gray-400 text-sm max-w-3xl">{branch.description}</p>
+
+        {/* Today status bar — right in the branch header */}
+        {today && (
+          <div
+            className="mt-3 inline-flex items-center gap-4 flex-wrap px-4 py-2 rounded-lg"
+            style={{ background: branch.color + '0a', border: `1px solid ${branch.color}18` }}
+          >
+            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: branch.color }}>
+              Today
+            </span>
+            <span className="text-xs text-gray-300">
+              📍 {today.headquarters}
+            </span>
+            {today.currentRebbe && (
+              <span className="text-xs text-gray-400">
+                Rebbe: <span className="text-gray-300">{today.currentRebbe}</span>
+              </span>
+            )}
+            {!today.currentRebbe && today.rebbeNote && (
+              <span className="text-xs text-gray-500 italic">{today.rebbeNote}</span>
+            )}
+            <span className="text-xs text-gray-500">
+              {today.estimatedFollowers}
+            </span>
+            {today.knownFor && (
+              <span className="text-xs text-gray-500 hidden lg:inline">
+                · {today.knownFor}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tree */}
@@ -716,67 +491,42 @@ function DetailView({ branchId, byId, onBack, onSelectFigure, selectedFigure }) 
         </div>
       </div>
 
-      {/* Related connections */}
-      {branchConnections.length > 0 && (
-        <div className="max-w-4xl mx-auto mt-4 mb-8">
-          <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">
-            Stories & Connections
-          </h2>
-          <div className="space-y-3">
-            {branchConnections.map(conn => {
-              const config = connectionTypeConfig[conn.type];
-              return (
-                <div
-                  key={conn.id}
-                  className="rounded-lg border p-4"
-                  style={{
-                    borderColor: config.color + '20',
-                    background: config.color + '05',
-                  }}
-                >
-                  <div className="flex items-center gap-2 mb-2">
-                    <span>{config.icon}</span>
-                    <h3 className="text-sm font-bold text-white">{conn.title}</h3>
-                    <span
-                      className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full"
-                      style={{ color: config.color, background: config.color + '15' }}
-                    >
-                      {config.label}
-                    </span>
-                  </div>
-                  <p className="text-gray-400 text-xs leading-relaxed">{conn.description}</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Detail panel */}
       {selectedFigure && (
-        <DetailPanel figure={selectedFigure} color={branch.color} onClose={() => onSelectFigure(null)} />
+        <DetailPanel
+          figure={selectedFigure}
+          color={branch.color}
+          onClose={() => onSelectFigure(null)}
+          byId={byId}
+        />
       )}
     </div>
   );
 }
 
 // ============================================================
-// DETAIL PANEL — shows bio when a figure is clicked
+// DETAIL PANEL — bio + stories + today info for clicked figure
 // ============================================================
-function DetailPanel({ figure, color, onClose }) {
+function DetailPanel({ figure, color, onClose, byId }) {
   const figColor = dynastyColors[figure.dynasty] || color;
+  const figureConnections = connectionIndex[figure.id] || [];
+
+  // Find today data if this figure is referenced
+  const todayData = activeToday.find(d => d.figureId === figure.id);
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 z-50 p-5 border-t backdrop-blur-md"
+      className="fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-md overflow-y-auto"
       style={{
         background: '#0f0f17ee',
         borderColor: figColor + '40',
+        maxHeight: '55vh',
       }}
     >
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1">
+            {/* Header */}
             <div className="flex items-center gap-3 mb-2 flex-wrap">
               <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: figColor }} />
               <h2 className="text-xl font-bold" style={{ color: figColor }}>
@@ -786,6 +536,8 @@ function DetailPanel({ figure, color, onClose }) {
                 {figure.hebrew}
               </span>
             </div>
+
+            {/* Metadata */}
             <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-gray-400 mb-3">
               <span><strong className="text-gray-300">Name:</strong> {figure.name}</span>
               <span><strong className="text-gray-300">Court:</strong> {figure.court}</span>
@@ -795,13 +547,84 @@ function DetailPanel({ figure, color, onClose }) {
                 <span><strong className="text-gray-300">Relation:</strong> {figure.relation}</span>
               )}
             </div>
+
+            {/* Bio */}
             <p className="text-gray-300 text-sm leading-relaxed max-w-3xl">
               {figure.notes}
             </p>
+
+            {/* TODAY section — for current/recent rebbes */}
+            {todayData && (
+              <div
+                className="mt-4 rounded-lg px-4 py-3"
+                style={{ background: figColor + '0a', border: `1px solid ${figColor}18` }}
+              >
+                <div className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: figColor }}>
+                  This Dynasty Today
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                  <div className="text-gray-400">
+                    <strong className="text-gray-300">HQ:</strong> {todayData.headquarters}
+                  </div>
+                  <div className="text-gray-400">
+                    <strong className="text-gray-300">Followers:</strong> {todayData.estimatedFollowers}
+                  </div>
+                  <div className="text-gray-400 sm:col-span-2">
+                    <strong className="text-gray-300">Known for:</strong> {todayData.knownFor}
+                  </div>
+                  {todayData.majorCenters.length > 0 && (
+                    <div className="sm:col-span-2 flex flex-wrap gap-1.5 mt-1">
+                      {todayData.majorCenters.map(c => (
+                        <span key={c} className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-500">
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* CONNECTIONS — stories involving this figure */}
+            {figureConnections.length > 0 && (
+              <div className="mt-4">
+                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                  Stories & Connections
+                </div>
+                <div className="space-y-2">
+                  {figureConnections.map(conn => {
+                    const config = connectionTypeConfig[conn.type];
+                    return (
+                      <div
+                        key={conn.id}
+                        className="rounded-lg px-3 py-2.5"
+                        style={{
+                          background: config.color + '08',
+                          border: `1px solid ${config.color}15`,
+                        }}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm">{config.icon}</span>
+                          <h4 className="text-xs font-bold text-white">{conn.title}</h4>
+                          <span
+                            className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-full"
+                            style={{ color: config.color, background: config.color + '15' }}
+                          >
+                            {config.label}
+                          </span>
+                        </div>
+                        <p className="text-gray-400 text-xs leading-relaxed">{conn.description}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
+
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-300 text-2xl leading-none px-2 flex-shrink-0"
+            className="text-gray-500 hover:text-gray-300 text-2xl leading-none px-2 flex-shrink-0 sticky top-0"
           >
             ×
           </button>
@@ -815,15 +638,13 @@ function DetailPanel({ figure, color, onClose }) {
 // APP — State management and routing
 // ============================================================
 export default function App() {
-  const [view, setView] = useState('overview'); // 'overview' | branch id
-  const [tab, setTab] = useState('overview'); // 'overview' | 'connections' | 'today'
+  const [view, setView] = useState('overview');
   const [selectedFigure, setSelectedFigure] = useState(null);
 
   const byId = useMemo(() => buildLookup(), []);
 
   const handleSelectBranch = useCallback((branchId) => {
     setView(branchId);
-    setTab('overview');
     setSelectedFigure(null);
   }, []);
 
@@ -840,34 +661,20 @@ export default function App() {
     }
   }, [selectedFigure]);
 
-  const handleTabChange = useCallback((newTab) => {
-    setTab(newTab);
-    setView('overview');
-    setSelectedFigure(null);
-  }, []);
-
-  // Are we viewing a specific branch detail?
   const isDetailView = view !== 'overview';
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-gray-200">
       {/* Top bar */}
       <div className="sticky top-0 z-40 bg-[#0a0a0f]/90 backdrop-blur-sm border-b border-white/5">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4 flex-wrap">
-          {/* Title */}
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <h1
             className="text-lg font-bold text-white tracking-tight cursor-pointer hover:text-amber-400 transition-colors flex-shrink-0"
-            onClick={() => { setView('overview'); setTab('overview'); setSelectedFigure(null); }}
+            onClick={() => { setView('overview'); setSelectedFigure(null); }}
           >
             Chassidic Dynasties
           </h1>
 
-          {/* Nav tabs — only on main views */}
-          {!isDetailView && (
-            <NavTabs activeTab={tab} onTabChange={handleTabChange} />
-          )}
-
-          {/* Search */}
           <div className="ml-auto flex-shrink-0 w-64 lg:w-80">
             <SearchBar
               byId={byId}
@@ -887,14 +694,6 @@ export default function App() {
           onBack={handleBack}
           onSelectFigure={handleSelectFigure}
           selectedFigure={selectedFigure}
-        />
-      ) : tab === 'connections' ? (
-        <ConnectionsView byId={byId} onSelectBranch={handleSelectBranch} />
-      ) : tab === 'today' ? (
-        <TodayView
-          byId={byId}
-          onSelectBranch={handleSelectBranch}
-          onSelectFigure={handleSelectFigure}
         />
       ) : (
         <OverviewView
