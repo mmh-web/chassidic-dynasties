@@ -130,7 +130,7 @@ export const activeToday = [
     estimatedFollowers: '3,000+ families',
     knownFor: 'Laniado Hospital (Netanya), rebuilt from total Holocaust destruction',
     branchId: 'galician',
-    figureId: 'yekusiel-klausenburg',
+    figureId: 'tzvi-elimelech-klausenburg',
   },
   {
     id: 'toldos-aharon',
